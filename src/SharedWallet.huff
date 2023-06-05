@@ -1,0 +1,174 @@
+/* Interface */
+#define function userBalance(address) view returns(uint256)
+#define function checkContractBalance() view returns(uint256)
+#define function userAllowance(address,address) view returns(uint256)
+#define function setUserAllowance(address,uint256) nonpayable returns()
+#define function transfer(uint256) view returns()
+#define function owner() view returns(address)
+
+
+/* Storage Slots */
+#define constant OWNER_ADDRESS = FREE_STORAGE_POINTER()
+#define constant ALLOWANCE_LOCATION = FREE_STORAGE_POINTER()
+
+
+/* Constructor */
+#define macro CONSTRUCTOR() = takes(0) returns(0) {
+   // Copy the owner into memory
+  0x20                        // [size] - byte size to copy
+  0x20 codesize sub           // [offset, size] - offset in the code to copy from
+  0x00                        // [mem, offset, size] - offset in memory to copy to
+  codecopy                    // []
+
+  // Set the new owner
+  0x00 mload                  // [owner]
+  [OWNER_ADDRESS]             // [OWNER, owner]
+  sstore                      // [owner]
+}
+
+/* Modifiers */
+#define macro IS_OWNER() = takes(0) returns(0) {
+    //check that msg.sender is owner
+    [OWNER_ADDRESS] sload               //[owner]
+    caller eq ok jumpi
+        0x00 0x00 revert
+    ok:
+}
+
+
+/* Methods */
+#define macro USER_BALANCE() = takes(0) returns(0) {
+    0x04 calldataload           //[address_to_check]
+    balance                     //[eth_balance]
+    0x00 mstore                 //[]
+    0x20 0x00 return            // returns eth balance in wei
+}
+
+#define macro CHECK_CONTRACT_BALANCE() = takes(0) returns(0) {
+    address balance             //[contract_balance]
+    0x00 mstore                 //[]
+    0x20 0x00 return            //[]
+}
+
+#define macro USER_ALLOWANCE() = takes(0) returns(0) {
+    //get owner onto stack and store at 0x00
+    0x04 calldataload ADDRESS_MASK()            //[masked_address]
+    0x00 mstore                                 //[]
+
+    [ALLOWANCE_LOCATION] 0x20 mstore            //[]
+    0x40 0x00 sha3                              //[key(allowances(owner))]
+    0x20 mstore                                 //[]
+    0x24 calldataload ADDRESS_MASK()            //[masked_to_address]
+    0x00 mstore                                 //[]
+    0x40 0x00 sha3                              //[]
+    sload                                       //[(allowances[owner][spender])]
+    0x00 mstore                                 //[]
+    0x20 0x00 return                            //[]
+}
+
+#define macro SET_USER_ALLOWANCE() = takes(0) returns(0) {
+    IS_OWNER()                              //check caller is owner
+    0x04 calldataload ADDRESS_MASK()        //[spender]
+    0x24 calldataload                       //[value, spender]
+    caller 0x00 mstore                      //[value,spender]
+    [ALLOWANCE_LOCATION] 0x20 mstore        //[value,spender]
+    0x40 0x00 sha3                          //[key(allowances[msg.sender]), value,spender]
+    0x20 mstore                             //[value,spender]
+    swap1 0x00 mstore                        //[value]
+    0x40 0x00 sha3                          //[key(allowances[msg.sender][spender]),value]
+    sstore                                  //[]
+    0x01 0x00 mstore
+    0x20 0x00 return
+}
+
+#define macro OWNER() = takes(0) returns(0) {
+    [OWNER_ADDRESS] sload               //[curr_owner]
+    0x00 mstore                         //[]
+    0x20 0x00 return                    //[] 
+}
+
+#define macro TRANSFER() = takes(0) returns(0) {
+    //takes amount to transfer              
+    0x04 calldataload                       //[value]
+    caller [OWNER_ADDRESS] sload            //[owner,msg.sender,value]
+    eq owner jumpi                          //[value]
+        [OWNER_ADDRESS] sload 0x00 mstore         //[value]
+        [ALLOWANCE_LOCATION] 0x20 mstore    //[]
+        0x40 0x00 sha3                      //[key(allowances[msg.sender]),value]
+        0x20 mstore                         //[value]
+        caller 0x00 mstore                  //[value]
+        0x40 0x00 sha3                       //[value]
+        sload                               //[allowance[owner][msg.sender], value]             
+        dup1 dup3                           //[v,a,a,v]     
+        gt iszero                           //[res,a,v]
+        not_overflow jumpi                  //[a,v]
+            0x00 0x00 revert
+        not_overflow:
+        //decrement before sending to prevent reentry
+        [OWNER_ADDRESS] sload 0x00 mstore       //[a,v]
+        [ALLOWANCE_LOCATION] 0x20 mstore        //[a,v]
+        0x40 0x00 sha3                          //[key(allowances[owner][spender]),a,v]
+        0x20 mstore                             //[a,v]
+        caller 0x00 mstore                      //[a,v]
+        0x40 0x00 sha3                          //[key(a[owner][spender]),a,v]
+        dup3 swap1 swap2 sub                    //[new_allow, key(a),v]
+        swap1 sstore                            //[v]
+        //spender allowance now decremented
+        0x00 dup1 dup1 dup1          //[0x00,0x00,0x00,0x00,v]
+        swap4 caller gas call        //[outcome]
+        success jumpi
+            0x00 0x00 revert
+        success:
+        0x20 0x00 return
+    owner:                          //[value]
+    0x00 dup1 dup1 dup1             //[0x00,0x00,0x00,0x00,v]
+    swap4 caller gas call           //[res]
+    success jumpi  
+        0x00 0x00 revert
+    sucesss:
+    0x20 0x00 return
+}
+
+#define macro FALLBACK() = {
+    0x01 0x00 mstore
+    0x20 0x00 return
+}
+
+/* Utils */
+
+#define macro ADDRESS_MASK() = takes(1) returns(1) {
+  0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff
+  and
+}
+ 
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called.
+    pc calldataload 0xe0 shr
+    dup1 __FUNC_SIG(userBalance) eq userBalance jumpi
+    dup1 __FUNC_SIG(checkContractBalance) eq checkContractBalance jumpi
+    dup1 __FUNC_SIG(userAllowance) eq userAllowance jumpi
+    dup1 __FUNC_SIG(setUserAllowance) eq setUserAllowance jumpi
+    dup1 __FUNC_SIG(transfer) eq transfer jumpi
+    dup1 __FUNC_SIG(owner) eq owner jumpi
+
+    FALLBACK()
+
+    // 0x00 0x00 revert
+
+    userBalance:
+        USER_BALANCE()
+    checkContractBalance:
+        CHECK_CONTRACT_BALANCE()
+    userAllowance:
+        USER_ALLOWANCE()
+    setUserAllowance:
+        SET_USER_ALLOWANCE()
+    transfer:
+        TRANSFER()
+    owner:
+        OWNER()
+    
+
+}
+
+
